@@ -178,20 +178,38 @@ async function searchTMDB(q) {
   return res;
 }
 
+function buildFallbackQueries(q) {
+  const words = q.split(/\s+/).filter(w => w.length >= 3);
+  const queries = new Set();
+  words.forEach(w => queries.add(w));
+  words.forEach((word, wi) => {
+    for (let i = 0; i < word.length - 1; i++) {
+      const fixed = word.slice(0, i) + word[i + 1] + word[i] + word.slice(i + 2);
+      if (fixed !== word) {
+        const newWords = [...words];
+        newWords[wi] = fixed;
+        queries.add(newWords.join(' '));
+      }
+    }
+  });
+  return [...queries].slice(0, 10);
+}
+
 async function go(q) {
   lastQ = q;
   out.innerHTML = '<div class="msg"><span class="sp"></span>Searching…</div>';
   try {
     let res = await searchTMDB(q);
     if (!res.length) {
-      const words = q.split(/\s+/).filter(w => w.length >= 3);
-      if (words.length > 1) {
-        const perWord = await Promise.all(words.map(w => searchTMDB(w)));
+      const fallbacks = buildFallbackQueries(q);
+      if (fallbacks.length) {
+        const allResults = await Promise.all(fallbacks.map(fq => searchTMDB(fq)));
         const counts = {};
-        perWord.flat().forEach(x => counts[x.id] = (counts[x.id] || 0) + 1);
+        allResults.flat().forEach(x => counts[x.id] = (counts[x.id] || 0) + 1);
         const seen = new Set();
-        res = perWord.flat().filter(x => { if (seen.has(x.id)) return false; seen.add(x.id); return true; });
-        res.sort((a, b) => counts[b.id] - counts[a.id]);
+        res = allResults.flat()
+          .filter(x => { if (seen.has(x.id)) return false; seen.add(x.id); return true; })
+          .sort((a, b) => counts[b.id] - counts[a.id] || (b.vote_count || 0) - (a.vote_count || 0));
       }
     }
     res = res.slice(0, 5);
