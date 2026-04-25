@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="StreamFind">
 <meta name="theme-color" content="#0a0a0f">
@@ -91,6 +91,9 @@ input[type=text]:focus { border-color: rgba(123,111,255,0.5); background: var(--
 .bdg.movie { color: var(--acc); background: rgba(232,255,71,0.08); border: 1px solid rgba(232,255,71,0.2); }
 .bdg.tv { color: var(--pur); background: rgba(123,111,255,0.1); border: 1px solid rgba(123,111,255,0.25); }
 .yr { font-size: 12px; color: var(--mu); }
+.rating { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: var(--acc); background: rgba(232,255,71,0.08); border: 1px solid rgba(232,255,71,0.2); border-radius: 5px; padding: 2px 6px; }
+.rating-imdb { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: #f5c518; background: rgba(245,197,24,0.08); border: 1px solid rgba(245,197,24,0.25); border-radius: 5px; padding: 2px 6px; }
+.rating-rt { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: #fa320a; background: rgba(250,50,10,0.08); border: 1px solid rgba(250,50,10,0.25); border-radius: 5px; padding: 2px 6px; }
 .ov { font-size: 12px; color: var(--mu); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 .prov { border-top: 1px solid var(--bd); padding: 12px 14px; }
@@ -146,6 +149,7 @@ const K = '6c27741b50b704ef8489173aa786c956';
 const BASE = 'https://api.themoviedb.org/3';
 const IB = 'https://image.tmdb.org/t/p/w154';
 const LB = 'https://image.tmdb.org/t/p/w45';
+const OMDB_KEY = '777a3eb6';
 let ftype = 'all', lastQ = '';
 
 const qi = document.getElementById('q');
@@ -181,6 +185,7 @@ async function go(q) {
       const card = mkCard(item);
       out.appendChild(card);
       loadP(item, card.querySelector('.prov'));
+      loadRatings(item, card);
     });
   } catch(e) {
     out.innerHTML = `<div class="msg">⚠️ ${esc(e.message)}</div>`;
@@ -192,6 +197,9 @@ function mkCard(item) {
   const title = esc(isM ? item.title : item.name);
   const year = ((isM ? item.release_date : item.first_air_date) || '').slice(0, 4);
   const ov = esc(item.overview || '');
+  const tmdbRating = item.vote_average && item.vote_average > 0
+    ? `<span class="rating"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>${item.vote_average.toFixed(1)}</span>`
+    : '';
   const div = document.createElement('div');
   div.className = 'card';
   div.innerHTML = `<div class="ctop">
@@ -203,6 +211,7 @@ function mkCard(item) {
       <div class="cmeta">
         <span class="bdg ${item.media_type}">${isM ? 'Movie' : 'TV'}</span>
         ${year ? `<span class="yr">${year}</span>` : ''}
+        ${tmdbRating}
       </div>
       ${ov ? `<div class="ov">${ov}</div>` : ''}
     </div>
@@ -214,12 +223,47 @@ function mkCard(item) {
 async function loadP(item, section) {
   try {
     const type = item.media_type === 'movie' ? 'movie' : 'tv';
-    const r = await fetch(`${BASE}/${type}/${item.id}/watch/providers?api_key=${K}`);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    renderP(section, (d.results || {}).US, item);
+    const results = await Promise.allSettled([
+      fetch(`${BASE}/${type}/${item.id}/watch/providers?api_key=${K}&watch_region=US`),
+      fetch(`${BASE}/${type}/${item.id}/watch/providers?api_key=${K}&watch_region=IN`)
+    ]);
+    const usData = results[0].status === 'fulfilled' && results[0].value.ok ? await results[0].value.json() : null;
+    const inData = results[1].status === 'fulfilled' && results[1].value.ok ? await results[1].value.json() : null;
+    const combined = combineProviders(usData?.results?.US, inData?.results?.IN);
+    renderP(section, combined, item);
   } catch(e) {
     section.innerHTML = `<div class="nonefound">Could not load streaming info</div>`;
+  }
+}
+
+async function loadRatings(item, card) {
+  if (!OMDB_KEY || OMDB_KEY === 'your_omdb_api_key_here') return;
+  console.log('Loading ratings for', item.title || item.name);
+  try {
+    const type = item.media_type === 'movie' ? 'movie' : 'tv';
+    const extRes = await fetch(`${BASE}/${type}/${item.id}/external_ids?api_key=${K}`);
+    if (!extRes.ok) {
+      console.log('External IDs fetch failed:', extRes.status);
+      return;
+    }
+    const ext = await extRes.json();
+    const imdbId = ext.imdb_id;
+    console.log('IMDB ID:', imdbId);
+    if (!imdbId) return;
+    const omdbRes = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_KEY}`);
+    if (!omdbRes.ok) {
+      console.log('OMDB fetch failed:', omdbRes.status);
+      return;
+    }
+    const omdb = await omdbRes.json();
+    console.log('OMDB response:', omdb);
+    const imdbRating = omdb.imdbRating;
+    const rtRating = omdb.Ratings?.find(r => r.Source === 'Rotten Tomatoes')?.Value;
+    const cmeta = card.querySelector('.cmeta');
+    if (imdbRating && imdbRating !== 'N/A') cmeta.insertAdjacentHTML('beforeend', `<span class="rating-imdb">IMDb ${imdbRating}</span>`);
+    if (rtRating) cmeta.insertAdjacentHTML('beforeend', `<span class="rating-rt">🍅 ${rtRating}</span>`);
+  } catch(e) {
+    console.log('Error loading ratings:', e);
   }
 }
 
@@ -232,6 +276,7 @@ function renderP(section, us, item) {
     { key: 'buy',      label: 'Buy',                        dot: 'p' },
   ];
   let html = ''; let any = false;
+  const title = item.title || item.name;
   groups.forEach(g => {
     const ps = us[g.key]; if (!ps || !ps.length) return; any = true;
     html += `<div class="pgrp"><div class="plbl"><span class="dot ${g.dot}"></span>${g.label}</div>
