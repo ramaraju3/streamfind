@@ -169,6 +169,7 @@ const BASE = 'https://api.themoviedb.org/3';
 const IB = 'https://image.tmdb.org/t/p/w154';
 const LB = 'https://image.tmdb.org/t/p/w45';
 const OMDB_KEY = '777a3eb6';
+const RT_KEY = '9100f45738mshf5f42cf22833e82p18439djsnd0f3eb66fb5e';
 const TUNEFIND_USER = 'your_tunefind_user';
 const TUNEFIND_PASS = 'your_tunefind_pass';
 let ftype = 'all', lastQ = '';
@@ -299,24 +300,38 @@ async function loadP(item, section) {
 }
 
 async function loadRatings(item, card) {
-  if (!OMDB_KEY || OMDB_KEY === 'your_omdb_api_key_here') return;
-  try {
-    const type = item.media_type === 'movie' ? 'movie' : 'tv';
-    const extRes = await fetch(`${BASE}/${type}/${item.id}/external_ids?api_key=${K}`);
-    if (!extRes.ok) return;
-    const ext = await extRes.json();
-    const imdbId = ext.imdb_id;
-    if (!imdbId) return;
-    const omdbRes = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_KEY}`);
-    if (!omdbRes.ok) return;
-    const omdb = await omdbRes.json();
-    const imdbRating = omdb.imdbRating;
-    const rtRating = omdb.Ratings?.find(r => r.Source === 'Rotten Tomatoes')?.Value;
-    const imdbSlot = card.querySelector('.imdb-slot');
-    const rtSlot = card.querySelector('.rt-slot');
-    if (imdbRating && imdbRating !== 'N/A') { imdbSlot.className = 'rating-imdb'; imdbSlot.textContent = `IMDb ${imdbRating}`; }
-    if (rtRating) { rtSlot.className = 'rating-rt'; rtSlot.innerHTML = `🍅 ${rtRating}`; }
-  } catch(e) {}
+  const title = item.title || item.name;
+  const type = item.media_type === 'movie' ? 'movie' : 'tv';
+
+  const [imdbResult, rtResult] = await Promise.allSettled([
+    (async () => {
+      if (!OMDB_KEY) return null;
+      const extRes = await fetch(`${BASE}/${type}/${item.id}/external_ids?api_key=${K}`);
+      if (!extRes.ok) return null;
+      const ext = await extRes.json();
+      if (!ext.imdb_id) return null;
+      const res = await fetch(`https://www.omdbapi.com/?i=${ext.imdb_id}&apikey=${OMDB_KEY}`);
+      if (!res.ok) return null;
+      const d = await res.json();
+      return d.imdbRating && d.imdbRating !== 'N/A' ? d.imdbRating : null;
+    })(),
+    (async () => {
+      if (!RT_KEY) return null;
+      const res = await fetch(`https://rottentomato.p.rapidapi.com/?name=${encodeURIComponent(title)}`, {
+        headers: { 'x-rapidapi-host': 'rottentomato.p.rapidapi.com', 'x-rapidapi-key': RT_KEY }
+      });
+      if (!res.ok) return null;
+      const d = await res.json();
+      return d.tomatometer_score || null;
+    })()
+  ]);
+
+  const imdbSlot = card.querySelector('.imdb-slot');
+  const rtSlot = card.querySelector('.rt-slot');
+  const imdbRating = imdbResult.status === 'fulfilled' ? imdbResult.value : null;
+  const rtScore = rtResult.status === 'fulfilled' ? rtResult.value : null;
+  if (imdbRating) { imdbSlot.className = 'rating-imdb'; imdbSlot.textContent = `IMDb ${imdbRating}`; }
+  if (rtScore) { rtSlot.className = 'rating-rt'; rtSlot.innerHTML = `🍅 ${rtScore}%`; }
 }
 
 function toSlug(title) {
