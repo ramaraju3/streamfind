@@ -113,6 +113,22 @@ input[type=text]:focus { border-color: rgba(123,111,255,0.5); background: var(--
 .nonefound { font-size: 13px; color: var(--mu); font-style: italic; }
 .jw-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 9px; font-size: 11px; color: var(--mu); text-decoration: none; border: 1px solid var(--bd); border-radius: 6px; padding: 3px 8px; }
 
+.xsec { border-top: 1px solid var(--bd); padding: 12px 14px; }
+.xsec-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--mu); margin-bottom: 8px; }
+.book-row { display: flex; gap: 10px; align-items: flex-start; }
+.book-thumb { width: 36px; height: 54px; border-radius: 5px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--bd); background: var(--s2); }
+.book-title { font-size: 13px; font-weight: 500; margin-bottom: 2px; line-height: 1.3; }
+.book-author { font-size: 11px; color: var(--mu); margin-bottom: 6px; }
+.album-row { display: flex; gap: 10px; align-items: center; margin-bottom: 4px; }
+.album-art { width: 44px; height: 44px; border-radius: 7px; object-fit: cover; flex-shrink: 0; }
+.album-name { font-size: 13px; font-weight: 500; margin-bottom: 2px; line-height: 1.3; }
+.album-artist { font-size: 11px; color: var(--mu); margin-bottom: 4px; }
+.song-list { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.song-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; }
+.song-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song-artist { font-size: 11px; color: var(--mu); flex-shrink: 0; }
+.xlink { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 11px; color: var(--pur); text-decoration: none; }
+
 footer { padding: 16px 0 calc(var(--safe-bot) + 8px); text-align: center; font-size: 11px; color: var(--mu); }
 footer a { color: var(--mu); }
 </style>
@@ -150,6 +166,8 @@ const BASE = 'https://api.themoviedb.org/3';
 const IB = 'https://image.tmdb.org/t/p/w154';
 const LB = 'https://image.tmdb.org/t/p/w45';
 const OMDB_KEY = '777a3eb6';
+const TUNEFIND_USER = 'your_tunefind_user';
+const TUNEFIND_PASS = 'your_tunefind_pass';
 let ftype = 'all', lastQ = '';
 
 const qi = document.getElementById('q');
@@ -223,6 +241,8 @@ async function go(q) {
       out.appendChild(card);
       loadP(item, card.querySelector('.prov'));
       loadRatings(item, card);
+      loadBook(item, card);
+      loadMusic(item, card);
     });
   } catch(e) {
     out.innerHTML = `<div class="msg">⚠️ ${esc(e.message)}</div>`;
@@ -253,7 +273,9 @@ function mkCard(item) {
       ${ov ? `<div class="ov">${ov}</div>` : ''}
     </div>
   </div>
-  <div class="prov"><div class="pload"><span class="msp"></span>Checking streaming…</div></div>`;
+  <div class="prov"><div class="pload"><span class="msp"></span>Checking streaming…</div></div>
+  <div class="book-sec"></div>
+  <div class="music-sec"></div>`;
   return div;
 }
 
@@ -271,32 +293,104 @@ async function loadP(item, section) {
 
 async function loadRatings(item, card) {
   if (!OMDB_KEY || OMDB_KEY === 'your_omdb_api_key_here') return;
-  console.log('Loading ratings for', item.title || item.name);
   try {
     const type = item.media_type === 'movie' ? 'movie' : 'tv';
     const extRes = await fetch(`${BASE}/${type}/${item.id}/external_ids?api_key=${K}`);
-    if (!extRes.ok) {
-      console.log('External IDs fetch failed:', extRes.status);
-      return;
-    }
+    if (!extRes.ok) return;
     const ext = await extRes.json();
     const imdbId = ext.imdb_id;
-    console.log('IMDB ID:', imdbId);
     if (!imdbId) return;
     const omdbRes = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_KEY}`);
-    if (!omdbRes.ok) {
-      console.log('OMDB fetch failed:', omdbRes.status);
-      return;
-    }
+    if (!omdbRes.ok) return;
     const omdb = await omdbRes.json();
-    console.log('OMDB response:', omdb);
     const imdbRating = omdb.imdbRating;
     const rtRating = omdb.Ratings?.find(r => r.Source === 'Rotten Tomatoes')?.Value;
     const cmeta = card.querySelector('.cmeta');
     if (imdbRating && imdbRating !== 'N/A') cmeta.insertAdjacentHTML('beforeend', `<span class="rating-imdb">IMDb ${imdbRating}</span>`);
     if (rtRating) cmeta.insertAdjacentHTML('beforeend', `<span class="rating-rt">🍅 ${rtRating}</span>`);
-  } catch(e) {
-    console.log('Error loading ratings:', e);
+  } catch(e) {}
+}
+
+function toSlug(title) {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+async function loadBook(item, card) {
+  const title = item.title || item.name;
+  try {
+    const r = await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(title)}&limit=5&fields=title,author_name,cover_i,key`);
+    if (!r.ok) return;
+    const d = await r.json();
+    const match = (d.docs || []).find(b => b.title?.toLowerCase() === title.toLowerCase());
+    if (!match) return;
+    const cover = match.cover_i ? `https://covers.openlibrary.org/b/id/${match.cover_i}-M.jpg` : null;
+    const author = (match.author_name || [])[0] || '';
+    const url = `https://openlibrary.org${match.key}`;
+    card.querySelector('.book-sec').innerHTML = `<div class="xsec">
+      <div class="xsec-lbl">📚 Based on the book</div>
+      <div class="book-row">
+        ${cover ? `<img class="book-thumb" src="${cover}" loading="lazy">` : ''}
+        <div>
+          <div class="book-title">${esc(match.title)}</div>
+          ${author ? `<div class="book-author">by ${esc(author)}</div>` : ''}
+          <a class="xlink" href="${url}" target="_blank">Read on Open Library →</a>
+        </div>
+      </div>
+    </div>`;
+  } catch(e) {}
+}
+
+async function loadMusic(item, card) {
+  const title = item.title || item.name;
+  const slug = toSlug(title);
+  const type = item.media_type === 'movie' ? 'movie' : 'show';
+  let albumHtml = '', songsHtml = '';
+
+  try {
+    const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(title + ' soundtrack')}&media=music&entity=album&limit=5`);
+    if (r.ok) {
+      const d = await r.json();
+      const album = (d.results || []).find(a => /soundtrack|original score|original motion picture/i.test(a.collectionName));
+      if (album) {
+        const art = album.artworkUrl100.replace('100x100bb', '160x160bb');
+        albumHtml = `<div class="album-row">
+          <img class="album-art" src="${art}" loading="lazy">
+          <div>
+            <div class="album-name">${esc(album.collectionName)}</div>
+            <div class="album-artist">${esc(album.artistName)}</div>
+            <a class="xlink" href="${album.collectionViewUrl}" target="_blank">Listen on Apple Music →</a>
+          </div>
+        </div>`;
+      }
+    }
+  } catch(e) {}
+
+  if (TUNEFIND_USER && TUNEFIND_USER !== 'your_tunefind_user') {
+    try {
+      const creds = btoa(`${TUNEFIND_USER}:${TUNEFIND_PASS}`);
+      const r = await fetch(`https://www.tunefind.com/api/v1/${type}/${slug}`, {
+        headers: { 'Authorization': `Basic ${creds}` }
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const songs = (d.song_instances || []).slice(0, 5);
+        if (songs.length) {
+          songsHtml = `<div class="xsec-lbl" style="margin-top:10px">🎬 Featured in scenes</div>
+            <div class="song-list">${songs.map(s => `<div class="song-row">
+              <span class="song-name">${esc(s.song?.name || '')}</span>
+              <span class="song-artist">${esc(s.song?.artist?.name || '')}</span>
+            </div>`).join('')}</div>
+            <a class="xlink" href="https://www.tunefind.com/${type}/${slug}" target="_blank">All songs on TuneFind →</a>`;
+        }
+      }
+    } catch(e) {}
+  }
+
+  if (albumHtml || songsHtml) {
+    card.querySelector('.music-sec').innerHTML = `<div class="xsec">
+      <div class="xsec-lbl">🎵 Soundtrack</div>
+      ${albumHtml}${songsHtml}
+    </div>`;
   }
 }
 
